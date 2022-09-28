@@ -16,7 +16,7 @@ def limit_mem():
 
 
 class DataGenerator(keras.utils.Sequence):
-    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, mean=None, std=None, sphere_grid=False):
+    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, mean=None, std=None):
         """
         Data generator for WeatherBench data.
         Template from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
@@ -36,10 +36,6 @@ class DataGenerator(keras.utils.Sequence):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.lead_time = lead_time
-
-        if sphere_grid:
-            ds = self.ds.rename(lat="lat_",lon="lon_", y="lat", x="lon", plev="level")
-            self.ds = ds
 
         data = []
         generic_level = xr.DataArray([1], coords={'level': [1]}, dims=['level'])
@@ -243,63 +239,8 @@ def make_rmse_metric(index, name="rmse"):
     rmse.__name__ = name
     return rmse
 
-class CustomCallback(keras.callbacks.Callback):
-    def __init__(self, dg_input, ds_ref):
-        super().__init__()
-        self.dg_input = dg_input
-        self.ds_ref = ds_ref
-        lat = ds_ref.lat.values
-        weights_lat = np.cos(np.deg2rad(lat))
-        self.weights_lat = (weights_lat / weights_lat.mean()).reshape((-1, 1))
-
-    """    
-    def on_epoch_end(self, epoch, logs=None):
-        preds = create_predictions(self.model, self.dg_input)
-        rmse = compute_weighted_rmse(preds, self.ds_ref).compute()
-        print("wrmse: ", rmse.z.item(), rmse.t.item())
-    """
-
-    def on_epoch_end(self, epoch, logs=None):
-        mean = self.dg_input.mean.values
-        std = self.dg_input.std.values
-        batch_size = self.dg_input.batch_size
-        #ds_pred = self.ds_ref.copy()
-        #delta_ref = np.zeros((len(self.dg_input), 2))
-        rmse = np.zeros((len(self.dg_input), 2))
-        inputs_l = []
-        ref_l = []
-        ds_out = xr.zeros_like(self.ds_ref)
-        ds_out.z.attrs["mean"] = mean[0]
-        ds_out.t.attrs["mean"] = mean[1]
-        ds_out.z.attrs["std"] = std[0]
-        ds_out.t.attrs["std"] = std[1]
-        for i, batch in enumerate(self.dg_input):
-            inputs, ref = batch
-            inputs_l.append(inputs)
-            ref_l.append(ref)
-            ref = ref * std + mean
-            preds = self.model.predict(inputs) * std + mean
-            #ds_pred.z.values[i*batch_size:(i+1)*batch_size, ...] = preds[..., 0]
-            #ds_pred.t.values[i*batch_size:(i+1)*batch_size, ...] = preds[..., 1]
-            rmse[i*batch_size:(i+1)*batch_size, 0] = np.sqrt((self.weights_lat * np.square(preds[..., 0] - ref[..., 0])).mean())
-            rmse[i*batch_size:(i+1)*batch_size, 1] = np.sqrt((self.weights_lat * np.square(preds[..., 1] - ref[..., 1])).mean())
-            #ref2 = self.ds_ref.isel(time=slice(i*batch_size, (i+1)*batch_size))
-            #delta_ref[i*batch_size:(i+1)*batch_size, 0] = np.sqrt(np.square(ref[..., 0] - ref2.z.to_numpy()).mean())
-            #delta_ref[i*batch_size:(i+1)*batch_size, 1] = np.sqrt(np.square(ref[..., 1] - ref2.t.to_numpy()).mean())
-        print("rmse_batch: ", rmse.mean(axis=0))#,  "rmse_func: ", compute_weighted_rmse(ds_pred, self.ds_ref).compute())
-        inputs_mat = np.concatenate(inputs_l, axis=0)
-        ref_mat = np.concatenate(ref_l, axis=0)
-        ds_out["z_ref"] = ds_out.z
-        ds_out["t_ref"] = ds_out.t
-        ds_out.z.data[...] = inputs_mat[..., 0]
-        ds_out.t.data[...] = inputs_mat[..., 1]
-        ds_out.z_ref.data[...] = ref_mat[..., 0]
-        ds_out.t_ref.data[...] = ref_mat[..., 1]
-        ds_out.to_netcdf("dump_quantized.nc")
-
-
 def main(datadir, vars, filters, kernels, lr, activation, dr, batch_size, patience, model_save_fn, pred_save_fn,
-         train_years, valid_years, test_years, lead_time, gpu, iterative, sphere_grid):
+         train_years, valid_years, test_years, lead_time, gpu, iterative):
     os.environ["CUDA_VISIBLE_DEVICES"]=str(gpu)
     # Limit TF memory usage
     limit_mem()
@@ -309,14 +250,6 @@ def main(datadir, vars, filters, kernels, lr, activation, dr, batch_size, patien
     z = xr.open_mfdataset(f'{datadir}/geopotential_500/*.nc', combine='by_coords')
     t = xr.open_mfdataset(f'{datadir}/temperature_850/*.nc', combine='by_coords')
 
-    if sphere_grid:
-        z = z.squeeze("plev")
-        t = t.squeeze("plev")
-        z_mean = xr.load_dataarray(f"{datadir}/stat/geopotential_500_mean.nc")
-        t_mean = xr.load_dataarray(f"{datadir}/stat/temperature_850_mean.nc")
-        z_std = xr.load_dataarray(f"{datadir}/stat/geopotential_500_std.nc")
-        t_std = xr.load_dataarray(f"{datadir}/stat/temperature_850_std.nc")
-
     ds = xr.merge([z, t], compat='override')  # Override level. discarded later anyway.
 
     # TODO: Flexible valid split
@@ -325,12 +258,12 @@ def main(datadir, vars, filters, kernels, lr, activation, dr, batch_size, patien
     ds_test = ds.sel(time=slice(*test_years))
 
     dic = {var: None for var in vars}
-    load = True#False if sphere_grid else True
-    dg_train = DataGenerator(ds_train, dic, lead_time, batch_size=batch_size, sphere_grid=sphere_grid, load=load)
+    load = True
+    dg_train = DataGenerator(ds_train, dic, lead_time, batch_size=batch_size, load=load)
     dg_valid = DataGenerator(ds_valid, dic, lead_time, batch_size=batch_size, mean=dg_train.mean,
-                             std=dg_train.std, shuffle=False, sphere_grid=sphere_grid, load=load)
+                             std=dg_train.std, shuffle=False, load=load)
     dg_test =  DataGenerator(ds_test, dic, lead_time, batch_size=batch_size, mean=dg_train.mean,
-                             std=dg_train.std, shuffle=False, sphere_grid=sphere_grid, load=load)
+                             std=dg_train.std, shuffle=False, load=load)
     print(f'Mean = {dg_train.mean}; Std = {dg_train.std}')
 
     # Build model
@@ -354,7 +287,6 @@ def main(datadir, vars, filters, kernels, lr, activation, dr, batch_size, patien
                           verbose=1,
                           mode='auto'
                       ),
-                      #CustomCallback(dg_test, ds_test.isel(time=slice(lead_time, None)))
                       ]
                       )
     #loss = train_history.history['loss']
@@ -388,7 +320,6 @@ if __name__ == '__main__':
     p.add_argument('--kernels', type=int, nargs='+', required=True, help='Kernel size for each layer')
     p.add_argument('--lead_time', type=int, required=True, help='Forecast lead time')
     p.add_argument('--iterative', type=bool, default=False, help='Is iterative forecast')
-    p.add_argument('--sphere_grid', type=bool, default=False, help='Is input dataset in the format of spheregrid')
     p.add_argument('--iterative_max_lead_time', type=int, default=5*24, help='Max lead time for iterative forecasts')
     p.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
     p.add_argument('--activation', type=str, default='elu', help='Activation function')
@@ -418,6 +349,5 @@ if __name__ == '__main__':
         test_years=args.test_years,
         lead_time=args.lead_time,
         gpu=args.gpu,
-        iterative=args.iterative,
-        sphere_grid=args.sphere_grid
+        iterative=args.iterative
     )
