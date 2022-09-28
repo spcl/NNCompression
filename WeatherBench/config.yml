@@ -1,0 +1,6 @@
+model_save_fn: cnn_model_
+pred_save_fn: prediction_
+vars: [z, t]
+filters: [64, 64, 64, 64, 2]
+kernels: [5, 5, 5, 5, 5]
+lead_time: 72
