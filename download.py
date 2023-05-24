@@ -1,6 +1,10 @@
 import cdsapi
 import argparse
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
+API_KEY = os.getenv('CDS_API_KEY')
 
 all_years = [
     '1979','1980','1981','1982','1983','1984','1985','1986','1987','1988','1989','1990','1991','1992','1993',
@@ -49,7 +53,7 @@ def download_single_file(
         '_'.join(variable + pressure_level + year) + '_raw.nc'
     )
 
-    c = cdsapi.Client()
+    c = cdsapi.Client(key=API_KEY, url="https://cds.climate.copernicus.eu/api/v2")
 
     request_parameters = {
         'product_type':   'reanalysis',
