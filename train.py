@@ -426,8 +426,15 @@ def test_on_wholedataset(file_name, data_path, output_path, output_file, model, 
                 var_pred = model(coord)
                 ds_pred.data[i, j, :, :] = var_pred.cpu().numpy().squeeze(-1)
                 max_error[j] = max(max_error[j], np.abs(ds_pred.data[i, j, :, :] - ds[variable][i, j, :, :]).max())
-    print(np.array_repr(max_error))
+
+    print_test_error(max_error, ps)
+    print(f"Saving model to {output_path}/{output_file}")
     ds_pred.to_netcdf(f"{output_path}/{output_file}")
+
+def print_test_error(errors, pressure_levels):
+    print("Testing result (the max absolute error for each pressure level over all available time points):")
+    for i in range(pressure_levels.shape[0]):
+        print(f"Max error for p={pressure_levels[i]}: {errors[i]}")
 
 def generate_outputs(model, output_path, output_file, device="cuda"):
     file_name = model.args.file_name
