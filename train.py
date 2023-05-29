@@ -356,27 +356,28 @@ class FitNetModule(pl.LightningModule):
         assert var.shape == var_pred.shape
         assert var.shape == lat.shape
         delta = var_pred - var
-        delta_abs = torch.abs(delta)
-        loss_linf = delta_abs.max()
-        loss_l1 = delta_abs.mean()
-        loss_l2 = delta.pow(2).mean()
-        if self.args.loss_type == "scaled_mse":
-            loss = (delta/(11 - torch.log(p))).pow(2).mean()
-        elif self.args.loss_type == "mse":
-            loss = loss_l2
-        elif self.args.loss_type == "logsumexp":
-            loss = torch.logsumexp(torch.abs(delta))
 
-        self.log("train_loss", loss)
-        #self.log("train_loss"+self.args.loss_type, loss)
-        self.log("train_loss_l2", loss_l2)
-        self.log("train_loss_l1", loss_l1)
-        self.log("train_loss_linf", loss_linf)
+        loss_linf, loss_mae, loss_mse, loss_scaled_mse, loss_logsumexp = calculate_losses(delta, p)
+
+        if self.args.loss_type == "scaled_mse":
+            loss = loss_scaled_mse
+        elif self.args.loss_type == "mse":
+            loss = loss_mse
+        elif self.args.loss_type == "logsumexp":
+            loss = loss_logsumexp
+
+        self.log("train_loss", loss, sync_dist=True)
+        self.log("train_linf", loss_linf, sync_dist=True)
+        self.log("train_mae", loss_mae, sync_dist=True)
+        self.log("train_mse", loss_mse, sync_dist=True)
+        self.log("train_scaled_mse", loss_scaled_mse, sync_dist=True)
+        self.log("train_logsumexp", loss_logsumexp, sync_dist=True)
+
         return loss
 
     def test_step(self, batch, batch_idx):
         return self.training_step(batch, batch_idx)
-    
+
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
             if self.args.use_stat:
@@ -386,23 +387,36 @@ class FitNetModule(pl.LightningModule):
                 coord, var = batch
                 var_pred = self(coord)
             lat = coord[..., 2:3] / 180. * math.pi
+            p = coord[..., 1:2]
             assert var.shape == var_pred.shape
             assert var.shape == lat.shape
-            delta_origin = var_pred - var
-            delta = delta_origin
-            val_loss = delta.abs().max()
-            val_loss_l2 = delta.pow(2).mean()
+            delta = var_pred - var
+            
+            loss_linf, loss_mae, loss_mse, loss_scaled_mse, loss_logsumexp = calculate_losses(delta, p)
+
             plt.figure(figsize=(10,8))
             X, Y = coord[..., 3].squeeze().detach().cpu(), coord[..., 2].squeeze().detach().cpu()
             plt.contour(X, Y, var.squeeze().detach().cpu(), colors="green")
             plt.contour(X, Y, var_pred.squeeze().detach().cpu(), colors="red")#cmap="Reds"
-            plt.pcolormesh(X, Y, delta_origin.squeeze().detach().cpu(), cmap="coolwarm", shading='nearest')
+            plt.pcolormesh(X, Y, delta.squeeze().detach().cpu(), cmap="coolwarm", shading='nearest')
             plt.axis('scaled')
             plt.title(f'p={torch.mean(coord[..., 1]).item()}')
             plt.colorbar(fraction=0.02, pad=0.04)
             if self.trainer.is_global_zero:
-                self.log("val_loss", val_loss, rank_zero_only=True)
-                self.log("val_loss_l2", val_loss_l2, rank_zero_only=True)
+                self.log("val_linf", loss_linf, rank_zero_only=True, sync_dist=True)
+                self.log("val_mae", loss_mae, rank_zero_only=True, sync_dist=True)
+                self.log("val_mse", loss_mse, rank_zero_only=True, sync_dist=True)
+                self.log("val_scaled_mse", loss_scaled_mse, rank_zero_only=True, sync_dist=True)
+                self.log("train_logsumexp", loss_logsumexp, rank_zero_only=True, sync_dist=True)
+
+def calculate_losses(delta, p):
+        delta_abs = torch.abs(delta)
+        loss_linf = delta_abs.max()
+        loss_mae = delta_abs.mean()
+        loss_mse = delta.pow(2).mean()
+        loss_scaled_mse = (delta/(11 - torch.log(p))).pow(2).mean()
+        loss_logsumexp = torch.logsumexp(input=torch.abs(delta), dim=(0,1,2))
+        return loss_linf, loss_mae, loss_mse, loss_scaled_mse, loss_logsumexp
 
 def test_on_wholedataset(file_name, data_path, output_path, output_file, model, device="cuda", variable="z"):
     ds = xr.open_dataset(f"{data_path}/{file_name}")
