@@ -495,7 +495,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_gpu", default=-1, type=int)
     parser.add_argument("--nepoches", default=20, type=int)
     parser.add_argument("--batch_size", default=3, type=int)
-    parser.add_argument("--num_workers", default=1, type=int)
+    parser.add_argument("--num_workers", default=20, type=int)
     parser.add_argument("--learning_rate", default=3e-4, type=float)
     parser.add_argument("--accumulate_grad_batches", default=1, type=int)
     parser.add_argument("--sigma", default=1.6, type=float)
