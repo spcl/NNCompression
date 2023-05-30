@@ -488,7 +488,7 @@ def main(args):
 
     trainer = None
     if not args.notraining:
-        strategy = pl.strategies.DDPStrategy(process_group_backend="nccl", find_unused_parameters=False)
+        strategy = pl.strategies.DataParallelStrategy()
         trainer = pl.Trainer(accumulate_grad_batches=args.accumulate_grad_batches, check_val_every_n_epoch=10, accelerator="gpu", auto_select_gpus=True, devices=args.num_gpu, strategy=strategy, min_epochs=10, max_epochs=args.nepoches, gradient_clip_val=0.5, sync_batchnorm=True)
         trainer.fit(model)
 
