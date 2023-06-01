@@ -15,7 +15,8 @@ import pyinterp
 import pyinterp.backends.xarray
 from scipy.interpolate import RegularGridInterpolator
 from tqdm import trange, tqdm
-import sys, os
+from pytorch_lightning.loggers import CSVLogger, WandbLogger
+import wandb
 
 
 YEAR = 2016
@@ -482,14 +483,30 @@ def generate_outputs(model, output_path, output_file, device="cuda"):
 
 def main(args):
     model = FitNetModule(args)
+
+    if args.use_wandb:
+        logger = WandbLogger(project=args.project_name, name=args.run_name, save_dir=args.log_dir)
+    else:
+        logger = CSVLogger(name=args.run_name, save_dir=args.log_dir)
+
     if args.ckpt_path != "":
         model_loaded = FitNetModule.load_from_checkpoint(args.ckpt_path)
         model.model.load_state_dict(model_loaded.model.state_dict())
 
     trainer = None
     if not args.notraining:
-        strategy = pl.strategies.DDPStrategy(process_group_backend="nccl", find_unused_parameters=False)
-        trainer = pl.Trainer(accumulate_grad_batches=args.accumulate_grad_batches, check_val_every_n_epoch=10, accelerator="gpu", auto_select_gpus=True, devices=args.num_gpu, strategy=strategy, min_epochs=10, max_epochs=args.nepoches, gradient_clip_val=0.5, sync_batchnorm=True)
+        trainer = pl.Trainer(accumulate_grad_batches=args.accumulate_grad_batches, 
+                             check_val_every_n_epoch=10,
+                             accelerator="gpu", 
+                             auto_select_gpus=True, 
+                             devices=args.num_gpu, 
+                             strategy=strategy,
+                             logger=logger,
+                             min_epochs=10, 
+                             max_epochs=args.nepoches, 
+                             gradient_clip_val=0.5, 
+                             sync_batchnorm=True
+                            )
         trainer.fit(model)
 
     model.eval()
@@ -513,6 +530,8 @@ def main(args):
     
 if __name__ == "__main__":
     parser = ArgumentParser()
+    parser.add_argument("--project_name", default="padl23t2_experiments", type=str)
+    parser.add_argument("--run_name", type=str)
     parser.add_argument("--num_gpu", default=-1, type=int)
     parser.add_argument("--nepoches", default=20, type=int)
     parser.add_argument("--batch_size", default=3, type=int)
@@ -548,6 +567,8 @@ if __name__ == "__main__":
     parser.add_argument("--output_file", default="output.nc", type=str)
     parser.add_argument('--notraining', action='store_true')
     parser.add_argument('--quantizing', action='store_true')
+    parser.add_argument('--use_wandb', action='store_true')
+    parser.add_argument('--log_dir', default="../logs", type=str)
     args = parser.parse_args()
     if args.all:
         args.use_batchnorm = True
