@@ -518,7 +518,8 @@ def main(args):
                              min_epochs=10, 
                              max_epochs=args.nepoches, 
                              gradient_clip_val=0.5, 
-                             sync_batchnorm=True
+                             sync_batchnorm=True,
+                             precision=args.model_precision
                             )
         trainer.fit(model)
 
@@ -551,6 +552,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", default=20, type=int)
     parser.add_argument("--learning_rate", default=3e-4, type=float)
     parser.add_argument("--accumulate_grad_batches", default=1, type=int)
+    parser.add_argument("--model_precision", default=32, type=int)
     parser.add_argument("--sigma", default=1.6, type=float)
     parser.add_argument("--nfeature", default=128, type=int)
     parser.add_argument("--ntfeature", default=16, type=int)
