@@ -508,6 +508,7 @@ def main(args):
 
     trainer = None
     if not args.notraining:
+        strategy = pl.strategies.DataParallelStrategy()
         trainer = pl.Trainer(accumulate_grad_batches=args.accumulate_grad_batches, 
                              check_val_every_n_epoch=1,
                              accelerator="gpu", 
