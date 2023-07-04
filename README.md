@@ -1,12 +1,11 @@
 # Download data
-Execute `WeatherBench/download.py` with following arguments:
 ```bash
-python download.py --variable=geopotential --mode=single --level_type=pressure --years=2016 --resolution=0.5 --time=00:00 --pressure_level 10 50 100 200 300 400 500 700 850 925 1000 --custom_fn=dataset1.nc
-python download.py --variable=geopotential --mode=single --level_type=pressure --years=2016 --resolution=0.25 --time=00:00 --pressure_level 10 50 100 200 300 400 500 700 850 925 1000 --custom_fn=dataset2.nc
-python download.py --variable=geopotential --mode=separate --level_type=pressure --resolution=5.625 --pressure_level=500 --custom_fn=dataset3_z.nc
-python download.py --variable=temperature --mode=separate --level_type=pressure --resolution=5.625 --pressure_level=850 --custom_fn=dataset3_t.nc
-python download.py --variable=geopotential --mode=separate --level_type=pressure --resolution=2.8125 --pressure_level=500 --custom_fn=dataset4_z.nc
-python download.py --variable=temperature --mode=separate --level_type=pressure --resolution=2.8125 --pressure_level=850 --custom_fn=dataset4_t.nc
+python download.py --variable=geopotential --mode=single --level_type=pressure --years=2016 --resolution=0.5 --time=00:00 --pressure_level 10 50 100 200 300 400 500 700 850 925 1000 --custom_fn=dataset1.nc --output_dir=datasets
+python download.py --variable=geopotential --mode=single --level_type=pressure --years=2016 --resolution=0.25 --time=00:00 --pressure_level 10 50 100 200 300 400 500 700 850 925 1000 --custom_fn=dataset2.nc --output_dir=datasets
+python download.py --variable=geopotential --mode=separate --level_type=pressure --resolution=5.625 --pressure_level=500 --custom_fn=dataset3_z.nc --output_dir=datasets
+python download.py --variable=temperature --mode=separate --level_type=pressure --resolution=5.625 --pressure_level=850 --custom_fn=dataset3_t.nc --output_dir=datasets
+python download.py --variable=geopotential --mode=separate --level_type=pressure --resolution=2.8125 --pressure_level=500 --custom_fn=dataset4_z.nc --output_dir=datasets
+python download.py --variable=temperature --mode=separate --level_type=pressure --resolution=2.8125 --pressure_level=850 --custom_fn=dataset4_t.nc --output_dir=datasets
 ```
 # Run experiments in Section 3.1
 ```bash
