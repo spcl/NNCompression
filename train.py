@@ -16,38 +16,10 @@ import pyinterp.backends.xarray
 from scipy.interpolate import RegularGridInterpolator
 from tqdm import trange, tqdm
 import sys, os
-
+from pathlib import Path
 
 YEAR = 2016
 
-class ERA5stat():
-    def __init__(self, file_name_mean, file_name_std, data_path, variable, grid_type):
-        self.ds_mean = xr.load_dataset(f"{data_path}/{file_name_mean}")[variable]
-        self.ds_std = xr.load_dataset(f"{data_path}/{file_name_std}")[variable]
-        self.grid_type = grid_type
-        if grid_type == "regular":
-            self.interp_mean = pyinterp.backends.xarray.Grid3D(self.ds_mean)
-            self.interp_std = pyinterp.backends.xarray.Grid3D(self.ds_std)
-        elif grid_type == "sphere_grid":
-            self.interp_mean = RegularGridInterpolator((self.ds_mean.plev, self.ds_mean.y, self.ds_mean.x), self.ds_mean.data)
-            self.interp_std = RegularGridInterpolator((self.ds_std.plev, self.ds_std.y, self.ds_std.x), self.ds_std.data)
-    
-    def interp_regular(self, plev, lat, lon):
-        mean = self.interp_mean.trivariate(
-            dict(longitude=lon.ravel(),
-                latitude=lat.ravel(),
-                level=plev.ravel())).reshape(lat.shape)
-        std = self.interp_std.trivariate(
-            dict(longitude=lon.ravel(),
-                latitude=lat.ravel(),
-                level=plev.ravel())).reshape(lat.shape)
-        return mean, std
-
-    def interp_sphere_grid(self, plev, y, x):
-        coord = torch.stack((plev, lat, lon))
-        mean = self.interp_mean(coord).reshape(y.shape)
-        std = self.interp_mean(coord).reshape(y.shape)
-        return mean, std
 
 class WeatherBenchDataset_sampling(Dataset):
     def __init__(self, file_name, data_path, nbatch, nsample, variable="z"):
@@ -98,7 +70,7 @@ class WeatherBenchDataset_sampling(Dataset):
         return coord, var, mean, std
         
 class ERA5Dataset_sampling(Dataset):
-    def __init__(self, file_name, data_path, nbatch, nsample, variable="z", stat_config=None):
+    def __init__(self, file_name, data_path, nbatch, nsample, variable="z", use_stat=False):
         file_path = f"{data_path}/{file_name}"
         self.ds = xr.open_dataset(file_path)[variable].load()#{"time": 20}
         self.ds = self.ds.assign_coords(time=self.ds.time.dt.dayofyear-1)
@@ -108,10 +80,12 @@ class ERA5Dataset_sampling(Dataset):
         self.nbatch = nbatch
         self.nsample = nsample
         self.rndeng = torch.quasirandom.SobolEngine(dimension=3, scramble=True)
-        if stat_config is not None:
-            self.stat = ERA5stat(**stat_config)
-        else:
-            self.stat = None
+        self.use_stat = use_stat
+        if use_stat:
+            path = Path(file_path)
+            base_path = f"{path.parent}/{path.stem}"
+            self.ds_min = xr.load_dataset(f"{base_path}_min.nc")[variable]
+            self.ds_max = xr.load_dataset(f"{base_path}_max.nc")[variable]
         #assert len(sample_block_size) == 3 # np, nlat, nlon
 
     def __len__(self):
@@ -134,11 +108,14 @@ class ERA5Dataset_sampling(Dataset):
                      time=time.ravel(),
                      level=pind.ravel())).reshape(latind.shape)
             var_sampled = torch.as_tensor(var_sampled).unsqueeze(-1)
-            if self.stat is None:
+            if not self.use_stat:
                 return coord, var_sampled
             else:
-                mean, std = self.stat.interp_regular(pind, latind, lonind)
-                return coord, var_sampled, mean, std
+                minv = torch.from_numpy(self.ds_min.sel(level=pind).to_numpy()).unsqueeze(-1)
+                maxv = torch.from_numpy(self.ds_max.sel(level=pind).to_numpy()).unsqueeze(-1)
+                mid = 0.5 * (minv + maxv) + torch.zeros_like(var_sampled)
+                range_ = maxv - minv + torch.zeros_like(var_sampled)
+                return coord, var_sampled, mid, range_
 
     def getslice(self, tind, pind):
         lat_v = torch.as_tensor(self.ds.latitude.to_numpy())
@@ -148,7 +125,16 @@ class ERA5Dataset_sampling(Dataset):
         t = torch.zeros_like(lat) + float(tind)
         coord = torch.stack((t, p, lat, lon), dim=-1).to(torch.float32)
         var = torch.as_tensor(self.ds.isel(time=tind, level=pind).to_numpy()).to(torch.float32).unsqueeze(-1)
-        return coord.unsqueeze(0), var.unsqueeze(0)
+        coord, var = coord.unsqueeze(0), var.unsqueeze(0)
+        if not self.use_stat:
+            return coord, var
+        else:
+            minv = torch.from_numpy(self.ds_min.isel(level=pind).to_numpy())
+            maxv = torch.from_numpy(self.ds_max.isel(level=pind).to_numpy())
+            mid = 0.5 * (minv + maxv) + torch.zeros_like(var)
+            range_ = maxv - minv + torch.zeros_like(var)
+            return coord, var, mid, range_
+
 
 class FourierFeature(nn.Module):
     def __init__(self, sigma, infeature, outfeature):
@@ -309,7 +295,7 @@ class FitNetModule(pl.LightningModule):
         
     def train_dataloader(self):
         if self.args.dataloader_mode == "sampling_nc":
-            dataset = ERA5Dataset_sampling(self.args.file_name, self.args.data_path, 2677*9, 361*120, variable=self.args.variable)
+            dataset = ERA5Dataset_sampling(self.args.file_name, self.args.data_path, 2677*9, 361*120, variable=self.args.variable, use_stat=self.args.use_stat)
         elif self.args.dataloader_mode == "weatherbench":
             dataset = WeatherBenchDataset_sampling(self.args.file_name, self.args.data_path, 2677*9, 361*120, variable=self.args.variable)
         dataloader = DataLoader(dataset, batch_size=self.args.batch_size, shuffle=False, num_workers=self.args.num_workers, pin_memory=True, prefetch_factor=8)
@@ -320,7 +306,7 @@ class FitNetModule(pl.LightningModule):
         it = 42
         ip = 4
         if self.args.dataloader_mode == "sampling_nc":
-            data = ERA5Dataset_sampling(self.args.file_name, self.args.data_path, 2677*9, 361*120, variable=self.args.variable).getslice(it, ip)
+            data = ERA5Dataset_sampling(self.args.file_name, self.args.data_path, 2677*9, 361*120, variable=self.args.variable, use_stat=self.args.use_stat).getslice(it, ip)
         elif self.args.dataloader_mode == "weatherbench":
             data = WeatherBenchDataset_sampling(self.args.file_name, self.args.data_path, 2677*9, 361*120, variable=self.args.variable).getslice(it, ip)
         dataset = TensorDataset(*data)

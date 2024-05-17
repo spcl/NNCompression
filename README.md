@@ -18,6 +18,16 @@ do
     python train.py --nepoches=20 --all  --quantizing --generate_full_outputs --variable=z --use_stat --tscale=360 --dataloader_mode=weatherbench  --file_name=dataset4_z_*.nc --width=$W --output_file=dataset4_z_w${W}.nc
 done
 ```
+# Compress variables other than geopotential (temperature as an example)
+```bash
+python gen_stat.py --path="." --filename="dataset1_w${W}.nc"
+python gen_stat.py --path="." --filename="dataset2_w${W}.nc"
+for W in 32 64 128 256 512
+do
+    python train.py --nepoches=20 --all --use_stat --quantizing --testing --variable=t  --dataloader_mode=sampling_nc --file_name=dataset1.nc --width=$W --output_file=dataset1_w${W}.nc
+    python train.py --nepoches=20 --all --use_stat --quantizing --testing --variable=t  --dataloader_mode=sampling_nc --file_name=dataset2.nc --width=$W --output_file=dataset2_w${W}.nc
+done
+```
 
 # Run experiments in Section 3.2
 ```bash
