@@ -390,8 +390,17 @@ class FitNetModule(pl.LightningModule):
                 self.log("val_loss", val_loss, rank_zero_only=True)
                 self.log("val_loss_l2", val_loss_l2, rank_zero_only=True)
 
-def test_on_wholedataset(file_name, data_path, output_path, output_file, model, device="cuda", variable="z"):
-    ds = xr.open_dataset(f"{data_path}/{file_name}")
+def test_on_wholedataset(file_name, data_path, output_path, output_file, model, device="cuda", variable="z", use_stat=False):
+    file_path = f"{data_path}/{file_name}"
+    if use_stat:
+        path = Path(file_path)
+        base_path = f"{path.parent}/{path.stem}"
+        ds_min = xr.load_dataset(f"{base_path}_min.nc")[variable]
+        ds_max = xr.load_dataset(f"{base_path}_max.nc")[variable]
+        mid = torch.from_numpy((0.5 * (ds_max + ds_min)).to_numpy(), device=device).squeeze()
+        range_ = torch.from_numpy(((ds_max - ds_min)).to_numpy(), device=device).squeeze()
+ 
+    ds = xr.open_dataset(file_path)
     ds_pred = xr.zeros_like(ds[variable]) - 9999
     ds = ds.assign_coords(time=ds.time.dt.dayofyear-1)
     dtype = model.input_type
@@ -410,6 +419,8 @@ def test_on_wholedataset(file_name, data_path, output_path, output_file, model, 
             coord = torch.stack(torch.meshgrid(t, p, lat, lon, indexing="ij"), dim=-1).squeeze(0).squeeze(0)
             with torch.no_grad():
                 var_pred = model(coord)
+                if use_stat:
+                    var_pred = var_pred * 0.5 * 1.4 * range_[j] + mid[j]
                 ds_pred.data[i, j, :, :] = var_pred.cpu().numpy().squeeze(-1)
                 max_error[j] = max(max_error[j], np.abs(ds_pred.data[i, j, :, :] - ds[variable][i, j, :, :]).max())
     print(np.array_repr(max_error))
@@ -468,7 +479,7 @@ def main(args):
         print(f"Quantized (FP16) size (MB): {quantized_size}")
 
     if args.testing and ((not trainer) or trainer.is_global_zero):
-        test_on_wholedataset(model.args.file_name, model.args.data_path, model.args.output_path, model.args.output_file, model, variable=model.args.variable)
+        test_on_wholedataset(model.args.file_name, model.args.data_path, model.args.output_path, model.args.output_file, model, variable=model.args.variable, use_stat=model.args.use_stat)
 
     if args.generate_full_outputs and ((not trainer) or trainer.is_global_zero):
         generate_outputs(model, args.output_path, args.output_file)
